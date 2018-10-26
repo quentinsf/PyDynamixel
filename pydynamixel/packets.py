@@ -15,7 +15,7 @@ where ``checksum`` is the complement of the lowest byte of the sum of the data b
 
 """
 
-import registers
+from . import registers
         
 ### Packet-Formatting Functions
 

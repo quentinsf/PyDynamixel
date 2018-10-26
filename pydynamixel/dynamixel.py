@@ -53,7 +53,7 @@ such as Linux and OSX).
         ser = dynamixel.get_serial_for_url(serial_port)
         dynamixel.set_led(ser, servo_id, led_value)
         print('LED set successfully!')
-    except Exception as e:
+    except DynamixelException as e:
         print('Unable to set LED.')
         print(e)
         
@@ -74,7 +74,7 @@ To perform the same function on Windows, use the following:
         ser = dynamixel.get_serial_for_url(serial_port)
         dynamixel.set_led(ser, servo_id, led_value)
         print('LED set successfully!')
-    except Exception as e:
+    except DynamixelException as e:
         print('Unable to set LED.')
         print(e)
         
@@ -110,7 +110,7 @@ This example simply moves a specified servo to a specified position.
     
         print('Success!')
     
-    except Exception as e:
+    except DynamixelException as e:
         print('Unable to move to desired position.')
         print(e)
 
@@ -118,10 +118,10 @@ This example simply moves a specified servo to a specified position.
 
 import serial
 import struct
-import registers
-import packets
+from . import registers
+from . import packets
 
-# The number of times to attempt to send a packet before raising an Exception.
+# The number of times to attempt to send a packet before raising a DynamixelException.
 NUM_ERROR_ATTEMPTS = 10
 
 VERBOSE = True
@@ -134,6 +134,7 @@ BAUDRATE = 1000000
 
 # The default timeout to use when reading from the serial interface.
 TIMEOUT = 0.1
+
 
 ### Serial Helper Functions
 
@@ -223,6 +224,12 @@ def get_error_string(error):
     
         return s
     
+
+# Use this for our own ordinary errors so as not
+# to confuse with system exceptions
+class DynamixelException(Exception):
+    pass
+
 class DynamixelFatalError(Exception):
     def __init__(self, value):
         self.value = value
@@ -232,7 +239,7 @@ class DynamixelFatalError(Exception):
 
 def get_exception(error_code):
     if error_code == registers.ERROR_BIT_MASKS.SEND_CHECKSUM:
-        return Exception('Send checksum mismatch.')
+        return DynamixelException('Send checksum mismatch.')
     else:
         return DynamixelFatalError(get_error_string(error_code))
     
@@ -281,7 +288,7 @@ def get_response(ser):
     Throws an exception if a ``serial`` timeout occurs.
     
     :param ser: The ``serial`` object to use. 
-    :raises: ``Exception`` if a ``serial`` timeout occurs.
+    :raises: ``DynamixelException`` if a ``serial`` timeout occurs.
     :returns: A ``Response`` object.
     
     """
@@ -294,51 +301,49 @@ def get_response(ser):
     while True:
         data = ser.read()
         if data == '':
-            raise Exception('Unable to read response header.')
-        data_byte = struct.unpack('B', data)[0]
+            raise DynamixelException('Unable to read response header.')
+        data_byte = data[0]
         if data_byte == 0xFF and last_byte == 0xFF:
             break
         last_byte = data_byte
         
-    id_str = ser.read()
-    if id_str == '':
-        raise Exception('Unable to read response id.')
-    servo_id = struct.unpack('B', id_str)[0]
+    id_bytes = ser.read()
+    if id_bytes == '':
+        raise DynamixelException('Unable to read response id.')
+    servo_id = id_bytes[0]
     byte_sum += servo_id
     
-    length_str = ser.read()
-    if length_str == '':
-        raise Exception('Unable to read length.')
-    length = struct.unpack('B', length_str)[0]
+    length_bytes = ser.read()
+    if length_bytes == '':
+        raise DynamixelException('Unable to read length.')
+    length = length_bytes[0]
     byte_sum += length
     
-    error_str = ser.read()
-    if error_str == '':
-        raise Exception('Unable to read error.')
-    error = struct.unpack('B', error_str)[0]
+    error_bytes = ser.read()
+    if error_bytes == '':
+        raise DynamixelException('Unable to read error.')
+    error = error_bytes[0]
     byte_sum += error
     
     data = None
     
     if length > 2:
-        data_str = ser.read(length-2)
-        if data_str == None or len(data_str) < length-2:
-            raise Exception('Unable to read response data.')
-        data = []
-        for d in data_str:
-            b = struct.unpack('B', d)[0]
-            data.append(b)
+        data_bytes = ser.read(length-2)
+        if data_bytes is None or len(data_bytes) < length-2:
+            raise DynamixelException('Unable to read response data.')
+        data = data_bytes
+        for b in data_bytes:
             byte_sum += b
     
     calc_checksum = (~byte_sum) & 0xFF
     
-    checksum_str = ser.read()
-    if checksum_str == None:
-        raise Exception('Unable to read response checksum.')
-    checksum = struct.unpack('B', checksum_str)[0]
+    checksum_bytes = ser.read()
+    if checksum_bytes is None:
+        raise DynamixelException('Unable to read response checksum.')
+    checksum = checksum_bytes[0]
     
     if checksum != calc_checksum:
-        raise Exception('Checksum mismatch ({0} vs {1}).'.format(checksum, calc_checksum))
+        raise DynamixelException('Checksum mismatch ({0} vs {1}).'.format(checksum, calc_checksum))
     
     return Response(servo_id, error, data, calc_checksum == checksum)
     
@@ -357,7 +362,7 @@ def write_and_get_response_multiple(ser, packet, servo_id = None, verbose = VERB
     :param verbose: If True, status information will be printed. (Default: ``VERBOSE``).
     :param attempts: The number of attempts to make to send the packet when an error is encountered. (Default: ``NUM_ERROR_ATTEMPTS``.)
         
-    :raises: An ``Exception`` if no packet is successfully read after ``attempts`` attempts, or
+    :raises: A ``DynamixelException`` if no packet is successfully read after ``attempts`` attempts, or
     a ``DynamixelFatalError`` if another error occurs.
     
     :returns: A ``Response`` object.
@@ -371,10 +376,10 @@ def write_and_get_response_multiple(ser, packet, servo_id = None, verbose = VERB
             response = get_response(ser)
             
             if servo_id != None and response.servo_id != servo_id:
-                raise Exception('Got packet from {0}, expected {1}.'.format(response.servo_id, servo_id))
+                raise DynamixelException('Got packet from {0}, expected {1}.'.format(response.servo_id, servo_id))
             
             if response.checksum_match == False:
-                raise Exception('Checksum mismatch.')
+                raise DynamixelException('Checksum mismatch.')
             
             if response.error > 0:
                 raise get_exception(response.error)
@@ -384,11 +389,11 @@ def write_and_get_response_multiple(ser, packet, servo_id = None, verbose = VERB
         except DynamixelFatalError as d:
             raise d
                 
-        except Exception as e:
+        except DynamixelException as e:
             if verbose:
                 print('Got exception when waiting for response from {0} on attempt {1}: {2}'.format(servo_id, i, e))
             
-    raise Exception('Unable to read response for servo {0}'.format(servo_id))
+    raise DynamixelException('Unable to read response for servo {0}'.format(servo_id))
    
 def set_led(ser, servo_id, value, verbose = VERBOSE, num_error_attempts = NUM_ERROR_ATTEMPTS):
     """
@@ -400,7 +405,7 @@ def set_led(ser, servo_id, value, verbose = VERBOSE, num_error_attempts = NUM_ER
     :param verbose: If True, status information will be printed. (Default: ``VERBOSE``).
     :param attempts: The number of attempts to make to send the packet when an error is encountered. (Default: ``NUM_ERROR_ATTEMPTS``.)
         
-    :raises: An ``Exception`` if no packet is successfully read after ``attempts`` attempts.
+    :raises: A ``DynamixelException`` if no packet is successfully read after ``attempts`` attempts.
     """
     
     packet = packets.get_write_led_packet(servo_id, value)
@@ -415,7 +420,7 @@ def get_torque(ser, servo_id, verbose = VERBOSE, num_error_attempts = NUM_ERROR_
     :param verbose: If True, status information will be printed. (Default: ``VERBOSE``).
     :param attempts: The number of attempts to make to send the packet when an error is encountered. (Default: ``NUM_ERROR_ATTEMPTS``.)
         
-    :raises: An ``Exception`` if no packet is successfully read after ``attempts`` attempts.
+    :raises: A ``DynamixelException`` if no packet is successfully read after ``attempts`` attempts.
     
     :returns: An integer indicating the reported torque.
     """
@@ -433,7 +438,7 @@ def get_position(ser, servo_id, verbose = VERBOSE, num_error_attempts = NUM_ERRO
     :param verbose: If True, status information will be printed. (Default: ``VERBOSE``).
     :param attempts: The number of attempts to make to send the packet when an error is encountered. (Default: ``NUM_ERROR_ATTEMPTS``.)
         
-    :raises: An ``Exception`` if no packet is successfully read after ``attempts`` attempts.
+    :raises: A ``DynamixelException`` if no packet is successfully read after ``attempts`` attempts.
     
     :returns: An integer indicating the reported position.
     """
@@ -452,7 +457,7 @@ def set_position(ser, servo_id, position, verbose = VERBOSE, num_error_attempts 
     :param verbose: If True, status information will be printed. (Default: ``VERBOSE``).
     :param attempts: The number of attempts to make to send the packet when an error is encountered. (Default: ``NUM_ERROR_ATTEMPTS``.)
         
-    :raises: An ``Exception`` if no packet is successfully read after ``attempts`` attempts.
+    :raises: A ``DynamixelException`` if no packet is successfully read after ``attempts`` attempts.
     """
     
     packet = packets.get_write_position_packet(servo_id, position)
@@ -468,7 +473,7 @@ def set_velocity(ser, servo_id, velocity, verbose = VERBOSE, num_error_attempts 
     :param verbose: If True, status information will be printed. (Default: ``VERBOSE``).
     :param attempts: The number of attempts to make to send the packet when an error is encountered. (Default: ``NUM_ERROR_ATTEMPTS``.)
         
-    :raises: An ``Exception`` if no packet is successfully read after ``attempts`` attempts.
+    :raises: A ``DynamixelException`` if no packet is successfully read after ``attempts`` attempts.
     """
     
     packet = packets.get_write_velocity_packet(servo_id, velocity)
@@ -483,7 +488,7 @@ def init(ser, servo_id, verbose = VERBOSE, num_error_attempts = NUM_ERROR_ATTEMP
     :param verbose: If True, status information will be printed. (Default: ``VERBOSE``).
     :param attempts: The number of attempts to make to send the packet when an error is encountered. (Default: ``NUM_ERROR_ATTEMPTS``.)
         
-    :raises: An ``Exception`` if no packet is successfully read after ``attempts`` attempts.
+    :raises: A ``DynamixelException`` if no packet is successfully read after ``attempts`` attempts.
     
     """
     
@@ -498,7 +503,7 @@ def send_action_packet(ser):
     
     :param ser: The ``serial`` object to use. 
         
-    :raises: An ``Exception`` if no packet is successfully read after ``attempts`` attempts.
+    :raises: A ``DynamixelException`` if no packet is successfully read after ``attempts`` attempts.
     
     """
     ser.write(packets.get_action_packet())

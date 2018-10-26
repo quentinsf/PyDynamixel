@@ -101,8 +101,8 @@ the program waits until all servos have finished moving before moving to the nex
 
 """
 
-import dynamixel
-import packets
+from . import dynamixel
+from . import packets
 import time
 
 NUM_ERROR_ATTEMPTS = 10
